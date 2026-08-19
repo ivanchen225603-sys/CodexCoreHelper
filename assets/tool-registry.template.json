@@ -1,0 +1,278 @@
+{
+  "schema_version": 1,
+  "tools": [
+    {
+      "id": "repository-native",
+      "display_name": "Repository-native tools",
+      "provider": "project",
+      "kind": "native",
+      "capabilities": [
+        "repository.inspect",
+        "code.edit",
+        "test.run",
+        "build.run"
+      ],
+      "transport": "native",
+      "availability": "unknown",
+      "read_scopes": ["."],
+      "write_scopes": ["."],
+      "authentication": { "type": "none", "environment_variables": [] },
+      "side_effects": ["workspace-write"],
+      "approval": "task-scope"
+    },
+    {
+      "id": "figma",
+      "display_name": "Figma",
+      "provider": "figma",
+      "kind": "design",
+      "capabilities": [
+        "design.read",
+        "design.write",
+        "design.screenshot",
+        "design.tokens",
+        "design.components",
+        "design.prototype",
+        "design.code-map"
+      ],
+      "transport": "mcp",
+      "availability": "unknown",
+      "mcp": {
+        "server_id": "figma",
+        "transport": "streamable_http",
+        "url": "https://mcp.figma.com/mcp",
+        "protocol_version": "2025-11-25",
+        "startup_timeout_seconds": 30,
+        "timeout_seconds": 120,
+        "max_output_bytes": 1048576,
+        "max_pages": 20,
+        "max_tools": 200,
+        "environment_variables": [],
+        "requires_network": true,
+        "mutation_policy": "deny",
+        "allowed_tools": []
+      },
+      "authentication": { "type": "oauth", "environment_variables": [] },
+      "side_effects": ["external-read", "external-write"],
+      "approval": "explicit-for-write"
+    },
+    {
+      "id": "generic-mcp-stdio",
+      "display_name": "Generic MCP STDIO server",
+      "provider": "configurable",
+      "kind": "mcp-server",
+      "capabilities": [
+        "telemetry.query"
+      ],
+      "transport": "mcp",
+      "availability": "unknown",
+      "read_scopes": [],
+      "write_scopes": [],
+      "mcp": {
+        "server_id": "generic-mcp-stdio",
+        "transport": "stdio",
+        "protocol_version": "2025-11-25",
+        "command": ["mcp-server-command"],
+        "startup_timeout_seconds": 15,
+        "timeout_seconds": 60,
+        "max_output_bytes": 1048576,
+        "max_pages": 20,
+        "max_tools": 200,
+        "environment_variables": [],
+        "requires_network": false,
+        "mutation_policy": "deny",
+        "allowed_tools": [
+          {
+            "name": "query_status",
+            "capability": "telemetry.query",
+            "side_effect": "read-only",
+            "input_schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "query": { "type": "string" }
+              },
+              "required": ["query"]
+            }
+          }
+        ]
+      },
+      "authentication": { "type": "environment", "environment_variables": [] },
+      "side_effects": ["external-read"],
+      "approval": "task-scope"
+    },
+    {
+      "id": "codex",
+      "display_name": "Codex",
+      "provider": "openai",
+      "kind": "coding-agent",
+      "capabilities": [
+        "repository.inspect",
+        "code.generate",
+        "code.edit",
+        "code.review",
+        "test.generate",
+        "test.run",
+        "structured-result.write"
+      ],
+      "transport": "cli",
+      "availability": "unknown",
+      "cli": {
+        "executable": "codex",
+        "arguments": ["exec", "--json"],
+        "input": "stdin",
+        "output": "jsonl"
+      },
+      "authentication": {
+        "type": "provider-cli",
+        "environment_variables": ["CODEX_API_KEY"]
+      },
+      "side_effects": ["workspace-write", "network"],
+      "approval": "task-permissions"
+    },
+    {
+      "id": "claude-code",
+      "display_name": "Claude Code",
+      "provider": "anthropic",
+      "kind": "coding-agent",
+      "capabilities": [
+        "repository.inspect",
+        "code.generate",
+        "code.edit",
+        "code.review",
+        "test.generate",
+        "test.run",
+        "structured-result.write"
+      ],
+      "transport": "cli",
+      "availability": "unknown",
+      "cli": {
+        "executable": "claude",
+        "arguments": ["-p", "--output-format", "json"],
+        "input": "argument-or-stdin",
+        "output": "json"
+      },
+      "authentication": {
+        "type": "provider-cli",
+        "environment_variables": ["ANTHROPIC_API_KEY"]
+      },
+      "side_effects": ["workspace-write", "network"],
+      "approval": "task-permissions"
+    },
+    {
+      "id": "source-control",
+      "display_name": "Source control provider",
+      "provider": "configurable",
+      "kind": "source-control",
+      "capabilities": [
+        "branch.create",
+        "diff.read",
+        "commit.create",
+        "pull-request.create",
+        "review.read",
+        "review.write",
+        "status.read"
+      ],
+      "transport": "mcp-or-cli-or-http",
+      "availability": "unknown",
+      "authentication": { "type": "provider", "environment_variables": [] },
+      "side_effects": ["external-read", "external-write"],
+      "approval": "explicit-for-write"
+    },
+    {
+      "id": "test-platform",
+      "display_name": "Automated test platform",
+      "provider": "configurable",
+      "kind": "test",
+      "capabilities": [
+        "test.discover",
+        "test.run",
+        "test.result.read",
+        "coverage.read",
+        "artifact.read"
+      ],
+      "transport": "mcp-or-cli-or-http",
+      "availability": "unknown",
+      "authentication": { "type": "provider", "environment_variables": [] },
+      "side_effects": ["external-read", "job-trigger"],
+      "approval": "task-scope"
+    },
+    {
+      "id": "ci",
+      "display_name": "CI provider",
+      "provider": "configurable",
+      "kind": "ci",
+      "capabilities": [
+        "pipeline.read",
+        "pipeline.trigger",
+        "run.read",
+        "logs.read",
+        "artifact.read",
+        "approval.read"
+      ],
+      "transport": "mcp-or-cli-or-http",
+      "availability": "unknown",
+      "authentication": { "type": "provider", "environment_variables": [] },
+      "side_effects": ["external-read", "job-trigger"],
+      "approval": "explicit-for-trigger"
+    },
+    {
+      "id": "generic-http-task",
+      "display_name": "Generic HTTP task provider",
+      "provider": "configurable",
+      "kind": "task-provider",
+      "capabilities": [
+        "task.submit",
+        "task.status.read",
+        "task.event.receive"
+      ],
+      "transport": "http-and-webhook",
+      "availability": "unknown",
+      "read_scopes": [],
+      "write_scopes": [],
+      "http": {
+        "task_url": "https://adapter.example.invalid/v1/tasks",
+        "bearer_token_env_var": "AI_LIFECYCLE_ADAPTER_TOKEN",
+        "hmac_secret_env_var": "AI_LIFECYCLE_ADAPTER_HMAC"
+      },
+      "webhook": {
+        "keys": [
+          {
+            "key_id": "primary",
+            "algorithm": "hmac-sha256",
+            "secret_env_var": "AI_LIFECYCLE_WEBHOOK_SECRET"
+          }
+        ]
+      },
+      "authentication": {
+        "type": "bearer-and-hmac",
+        "environment_variables": [
+          "AI_LIFECYCLE_ADAPTER_TOKEN",
+          "AI_LIFECYCLE_ADAPTER_HMAC",
+          "AI_LIFECYCLE_WEBHOOK_SECRET"
+        ]
+      },
+      "side_effects": ["external-read", "job-trigger"],
+      "approval": "explicit-for-trigger"
+    },
+    {
+      "id": "deployment",
+      "display_name": "Deployment provider",
+      "provider": "configurable",
+      "kind": "deployment",
+      "capabilities": [
+        "infrastructure.plan",
+        "infrastructure.apply",
+        "deploy.preview",
+        "deploy.execute",
+        "deploy.status",
+        "deploy.rollback",
+        "health.read"
+      ],
+      "transport": "mcp-or-cli-or-http",
+      "availability": "unknown",
+      "authentication": { "type": "provider", "environment_variables": [] },
+      "side_effects": ["external-read", "external-write", "production-change"],
+      "approval": "human-required-for-production"
+    }
+  ]
+}

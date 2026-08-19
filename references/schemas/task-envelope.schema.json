@@ -1,0 +1,206 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/ai-lifecycle/task-envelope.schema.json",
+  "title": "Lifecycle Task Envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "spec_version",
+    "task_id",
+    "revision",
+    "created_at",
+    "expires_at",
+    "correlation_id",
+    "project_id",
+    "lifecycle_run_id",
+    "phase",
+    "role",
+    "objective",
+    "inputs",
+    "constraints",
+    "assumptions",
+    "dependencies",
+    "acceptance_criteria",
+    "permissions",
+    "ownership",
+    "tool_preferences",
+    "output_contract",
+    "callback",
+    "retry_policy"
+  ],
+  "properties": {
+    "spec_version": { "type": "string", "pattern": "^1\\.[0-9]+\\.[0-9]+$" },
+    "task_id": { "$ref": "#/$defs/identifier" },
+    "revision": { "type": "integer", "minimum": 1 },
+    "created_at": { "type": "string", "format": "date-time" },
+    "expires_at": { "type": ["string", "null"], "format": "date-time" },
+    "correlation_id": { "$ref": "#/$defs/identifier" },
+    "causation_id": {
+      "type": ["string", "null"],
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "project_id": { "$ref": "#/$defs/shortIdentifier" },
+    "lifecycle_run_id": { "$ref": "#/$defs/identifier" },
+    "phase": {
+      "enum": [
+        "discovery",
+        "requirements",
+        "architecture",
+        "prototype",
+        "implementation",
+        "review",
+        "verification",
+        "integration",
+        "deployment",
+        "operations"
+      ]
+    },
+    "role": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+    },
+    "objective": { "type": "string", "minLength": 1, "maxLength": 20000 },
+    "inputs": {
+      "type": "array",
+      "maxItems": 256,
+      "items": { "$ref": "#/$defs/artifact" }
+    },
+    "constraints": {
+      "type": "array",
+      "maxItems": 128,
+      "items": { "type": "string", "minLength": 1, "maxLength": 4000 },
+      "uniqueItems": true
+    },
+    "assumptions": {
+      "type": "array",
+      "maxItems": 128,
+      "items": { "type": "string", "minLength": 1, "maxLength": 4000 },
+      "uniqueItems": true
+    },
+    "dependencies": {
+      "type": "array",
+      "maxItems": 256,
+      "items": { "$ref": "#/$defs/identifier" },
+      "uniqueItems": true
+    },
+    "acceptance_criteria": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "text", "verification"],
+        "properties": {
+          "id": { "$ref": "#/$defs/shortIdentifier" },
+          "text": { "type": "string", "minLength": 1, "maxLength": 4000 },
+          "verification": { "type": "string", "minLength": 1, "maxLength": 4000 }
+        }
+      }
+    },
+    "permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["read", "write", "network", "external_mutations"],
+      "properties": {
+        "read": { "type": "array", "maxItems": 256, "items": { "$ref": "#/$defs/scope" }, "uniqueItems": true },
+        "write": { "type": "array", "maxItems": 256, "items": { "$ref": "#/$defs/scope" }, "uniqueItems": true },
+        "network": { "type": "boolean" },
+        "external_mutations": { "type": "boolean" }
+      }
+    },
+    "ownership": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["write_scope", "forbidden_scope"],
+      "properties": {
+        "write_scope": { "type": "array", "maxItems": 256, "items": { "$ref": "#/$defs/scope" }, "uniqueItems": true },
+        "forbidden_scope": { "type": "array", "maxItems": 256, "items": { "$ref": "#/$defs/scope" }, "uniqueItems": true }
+      }
+    },
+    "tool_preferences": {
+      "type": "array",
+      "maxItems": 32,
+      "items": { "$ref": "#/$defs/shortIdentifier" },
+      "uniqueItems": true
+    },
+    "output_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["result_schema"],
+      "properties": {
+        "result_schema": { "$ref": "#/$defs/relativePath" },
+        "artifact_types": {
+          "type": "array",
+          "maxItems": 128,
+          "items": { "$ref": "#/$defs/shortIdentifier" },
+          "uniqueItems": true
+        }
+      }
+    },
+    "callback": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["url", "event_types", "key_id"],
+      "properties": {
+        "url": { "type": "string", "format": "uri", "pattern": "^https://" },
+        "event_types": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": { "$ref": "#/$defs/shortIdentifier" },
+          "uniqueItems": true
+        },
+        "key_id": { "$ref": "#/$defs/shortIdentifier" }
+      }
+    },
+    "retry_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_attempts", "base_delay_seconds", "max_delay_seconds"],
+      "properties": {
+        "max_attempts": { "type": "integer", "minimum": 1, "maximum": 10 },
+        "base_delay_seconds": { "type": "number", "minimum": 0, "maximum": 300 },
+        "max_delay_seconds": { "type": "number", "minimum": 0, "maximum": 3600 }
+      }
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$"
+    },
+    "shortIdentifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^(?![A-Za-z]:)(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"
+    },
+    "scope": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^(?![A-Za-z]:)(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_id", "artifact_type", "uri", "digest"],
+      "properties": {
+        "artifact_id": { "$ref": "#/$defs/shortIdentifier" },
+        "artifact_type": { "$ref": "#/$defs/shortIdentifier" },
+        "uri": { "$ref": "#/$defs/relativePath" },
+        "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "version": { "type": ["string", "null"], "maxLength": 128 }
+      }
+    }
+  }
+}

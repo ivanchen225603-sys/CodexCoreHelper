@@ -1,0 +1,4 @@
+interface:
+  display_name: "CodexCoreHelper"
+  short_description: "Coordinate software delivery across the full lifecycle"
+  default_prompt: "Use $codex-core-helper to coordinate this project from requirements through verified deployment."

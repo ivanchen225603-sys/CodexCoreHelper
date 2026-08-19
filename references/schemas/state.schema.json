@@ -1,0 +1,282 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/ai-lifecycle/state.schema.json",
+  "title": "Lifecycle Runtime State",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "lifecycle_run_id",
+    "current_phase",
+    "phases",
+    "approvals",
+    "events",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "lifecycle_run_id": { "$ref": "#/$defs/identifier" },
+    "current_phase": {
+      "oneOf": [
+        { "$ref": "#/$defs/phase" },
+        { "type": "null" }
+      ]
+    },
+    "phases": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 10,
+      "propertyNames": { "$ref": "#/$defs/phase" },
+      "additionalProperties": { "$ref": "#/$defs/phaseState" }
+    },
+    "approvals": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": { "$ref": "#/$defs/approval" }
+    },
+    "events": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": { "$ref": "#/$defs/event" }
+    },
+    "dropped_event_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "created_at": { "$ref": "#/$defs/timestamp" },
+    "updated_at": { "$ref": "#/$defs/timestamp" }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$"
+    },
+    "shortIdentifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/+\\-=]{0,255}$"
+    },
+    "phase": {
+      "enum": [
+        "discovery",
+        "requirements",
+        "architecture",
+        "prototype",
+        "implementation",
+        "review",
+        "verification",
+        "integration",
+        "deployment",
+        "operations"
+      ]
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^(?![A-Za-z]:)(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"
+    },
+    "identityAssertion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "algorithm",
+        "issuer",
+        "subject",
+        "audience",
+        "key_id",
+        "key_fingerprint",
+        "jti",
+        "issued_at",
+        "not_before",
+        "expires_at"
+      ],
+      "properties": {
+        "algorithm": { "const": "Ed25519" },
+        "issuer": { "$ref": "#/$defs/shortIdentifier" },
+        "subject": { "$ref": "#/$defs/shortIdentifier" },
+        "audience": { "const": "software-lifecycle-orchestrator" },
+        "key_id": { "$ref": "#/$defs/shortIdentifier" },
+        "key_fingerprint": { "$ref": "#/$defs/digest" },
+        "jti": { "$ref": "#/$defs/identifier" },
+        "issued_at": { "type": "integer", "minimum": 0 },
+        "not_before": { "type": "integer", "minimum": 0 },
+        "expires_at": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "authorization": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": [
+        "decision_id",
+        "environment",
+        "artifact_digest",
+        "baseline",
+        "gate_evidence",
+        "authorized_at",
+        "actor",
+        "promotion_policy_digest",
+        "deployment_contract_digest"
+      ],
+      "properties": {
+        "decision_id": { "$ref": "#/$defs/identifier" },
+        "environment": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "artifact_digest": { "$ref": "#/$defs/digest" },
+        "baseline": { "$ref": "#/$defs/digest" },
+        "gate_evidence": { "$ref": "#/$defs/relativePath" },
+        "authorized_at": { "$ref": "#/$defs/timestamp" },
+        "actor": { "$ref": "#/$defs/shortIdentifier" },
+        "identity_assertion_jti": { "$ref": "#/$defs/identifier" },
+        "promotion_policy_digest": { "$ref": "#/$defs/digest" },
+        "deployment_contract_digest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "completedEnvironment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "environment",
+        "artifact_digest",
+        "authorization_decision_id",
+        "provider_run_id",
+        "evidence",
+        "completed_at"
+      ],
+      "properties": {
+        "environment": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "artifact_digest": { "$ref": "#/$defs/digest" },
+        "authorization_decision_id": { "$ref": "#/$defs/identifier" },
+        "provider_run_id": { "$ref": "#/$defs/identifier" },
+        "evidence": { "$ref": "#/$defs/relativePath" },
+        "completed_at": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "promotion": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": [
+        "policy_digest",
+        "artifact_digest",
+        "completed_environments",
+        "pending_environment",
+        "pending_artifact_digest"
+      ],
+      "properties": {
+        "policy_digest": { "$ref": "#/$defs/digest" },
+        "artifact_digest": {
+          "oneOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }]
+        },
+        "completed_environments": {
+          "type": "array",
+          "maxItems": 32,
+          "items": { "$ref": "#/$defs/completedEnvironment" }
+        },
+        "pending_environment": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "pending_artifact_digest": {
+          "oneOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }]
+        }
+      }
+    },
+    "phaseState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "baseline",
+        "last_evidence",
+        "approval_nonce",
+        "authorization",
+        "updated_at"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "locked",
+            "ready",
+            "in_progress",
+            "technical_pass",
+            "authorized",
+            "approved",
+            "failed",
+            "rejected",
+            "blocked"
+          ]
+        },
+        "baseline": {
+          "oneOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }]
+        },
+        "last_evidence": {
+          "oneOf": [{ "$ref": "#/$defs/relativePath" }, { "type": "null" }]
+        },
+        "approval_nonce": {
+          "oneOf": [{ "$ref": "#/$defs/identifier" }, { "type": "null" }]
+        },
+        "authorization": { "$ref": "#/$defs/authorization" },
+        "promotion": { "$ref": "#/$defs/promotion" },
+        "updated_at": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "decision_id",
+        "phase",
+        "decision",
+        "actor",
+        "actor_type",
+        "reason",
+        "baseline",
+        "evidence",
+        "recorded_at",
+        "environment",
+        "artifact_digest"
+      ],
+      "properties": {
+        "decision_id": { "$ref": "#/$defs/identifier" },
+        "phase": { "$ref": "#/$defs/phase" },
+        "decision": { "enum": ["approve", "reject", "auto-authorized"] },
+        "actor": { "$ref": "#/$defs/shortIdentifier" },
+        "actor_type": { "enum": ["human", "state-machine"] },
+        "identity_assertion": { "$ref": "#/$defs/identityAssertion" },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 4000 },
+        "baseline": { "$ref": "#/$defs/digest" },
+        "evidence": { "$ref": "#/$defs/relativePath" },
+        "recorded_at": { "$ref": "#/$defs/timestamp" },
+        "environment": { "type": ["string", "null"], "maxLength": 64 },
+        "artifact_digest": {
+          "oneOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }]
+        }
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_id", "event_type", "occurred_at", "phase", "data"],
+      "properties": {
+        "event_id": { "$ref": "#/$defs/identifier" },
+        "event_type": { "$ref": "#/$defs/shortIdentifier" },
+        "occurred_at": { "$ref": "#/$defs/timestamp" },
+        "phase": { "$ref": "#/$defs/phase" },
+        "data": { "type": "object", "maxProperties": 64 }
+      }
+    }
+  }
+}

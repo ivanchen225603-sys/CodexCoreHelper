@@ -1,0 +1,172 @@
+{
+  "schema_version": 1,
+  "project": {
+    "id": "replace-with-project-id",
+    "name": "replace-with-project-name",
+    "type": "auto",
+    "repository_root": ".",
+    "risk_level": "standard",
+    "description": ""
+  },
+  "stack": {
+    "languages": [],
+    "frameworks": [],
+    "package_managers": [],
+    "build_systems": [],
+    "databases": [],
+    "deployment_targets": []
+  },
+  "lifecycle": {
+    "phases": [
+      "discovery",
+      "requirements",
+      "architecture",
+      "prototype",
+      "implementation",
+      "review",
+      "verification",
+      "integration",
+      "deployment",
+      "operations"
+    ],
+    "disabled": {},
+    "human_approvals": [
+      "requirements",
+      "architecture",
+      "prototype",
+      "verification",
+      "deployment"
+    ],
+    "promotion_matrix": {
+      "schema_version": 1,
+      "artifact_layout": "environment-subdirectories",
+      "enforce_immutable_digest": true,
+      "environments": [
+        {
+          "name": "development",
+          "approval_policy": "human-required",
+          "final": false
+        },
+        {
+          "name": "test",
+          "approval_policy": "human-required",
+          "final": false
+        },
+        {
+          "name": "staging",
+          "approval_policy": "human-required",
+          "final": false
+        },
+        {
+          "name": "production",
+          "approval_policy": "human-required",
+          "final": true
+        }
+      ]
+    }
+  },
+  "agents": {
+    "enabled": true,
+    "max_parallel": 3,
+    "ownership_strategy": "exclusive-path",
+    "roles": [
+      "discovery-analyst",
+      "requirements-analyst",
+      "architect",
+      "product-designer",
+      "implementer",
+      "reviewer",
+      "quality-engineer",
+      "security-reviewer",
+      "release-engineer",
+      "operations-analyst"
+    ]
+  },
+  "quality_gates": {
+    "discovery": {
+      "required_artifacts": [".ai-lifecycle/artifacts/discovery/source-requirement.md"],
+      "checks": []
+    },
+    "requirements": {
+      "required_artifacts": [
+        ".ai-lifecycle/artifacts/requirements/requirements.json",
+        ".ai-lifecycle/artifacts/requirements/acceptance-criteria.json",
+        ".ai-lifecycle/artifacts/requirements/traceability.json"
+      ],
+      "checks": []
+    },
+    "architecture": {
+      "required_artifacts": [
+        ".ai-lifecycle/artifacts/architecture/architecture-overview.md",
+        ".ai-lifecycle/artifacts/architecture/decision-log.md"
+      ],
+      "checks": []
+    },
+    "prototype": {
+      "required_artifacts": [
+        ".ai-lifecycle/artifacts/prototype/prototype-manifest.json",
+        ".ai-lifecycle/artifacts/prototype/flow-map.md"
+      ],
+      "checks": []
+    },
+    "implementation": {
+      "required_artifacts": [".ai-lifecycle/artifacts/implementation/implementation-notes.md"],
+      "checks": []
+    },
+    "review": {
+      "required_artifacts": [
+        ".ai-lifecycle/artifacts/review/review-findings.json",
+        ".ai-lifecycle/artifacts/review/review-summary.md"
+      ],
+      "checks": []
+    },
+    "verification": {
+      "required_artifacts": [
+        ".ai-lifecycle/artifacts/verification/test-plan.md",
+        ".ai-lifecycle/artifacts/verification/acceptance-test-trace.json"
+      ],
+      "checks": []
+    },
+    "integration": {
+      "required_artifacts": [
+        ".ai-lifecycle/artifacts/integration/release-candidate.json",
+        ".ai-lifecycle/artifacts/integration/release-readiness.md"
+      ],
+      "checks": []
+    },
+    "deployment": {
+      "required_artifacts": [
+        ".ai-lifecycle/artifacts/deployment/deployment-plan.json",
+        ".ai-lifecycle/artifacts/deployment/environment-readiness.json",
+        ".ai-lifecycle/artifacts/deployment/rollback-plan.md"
+      ],
+      "checks": [],
+      "post_required_artifacts": [
+        ".ai-lifecycle/artifacts/deployment/deployment-record.json",
+        ".ai-lifecycle/artifacts/deployment/post-deployment-verification.json"
+      ],
+      "post_checks": []
+    },
+    "operations": {
+      "required_artifacts": [".ai-lifecycle/artifacts/operations/operational-readiness.md"],
+      "checks": []
+    }
+  },
+  "integration": {
+    "tool_registry": ".ai-lifecycle/tool-registry.json",
+    "default_timeout_seconds": 1200,
+    "retry": {
+      "max_attempts": 3,
+      "base_delay_seconds": 2,
+      "max_delay_seconds": 30
+    },
+    "evidence_retention_days": 90
+  },
+  "policy": {
+    "external_mutations": "require-explicit-authority",
+    "production_approval": "human-required",
+    "secrets": "environment-or-secret-manager",
+    "network": "least-required",
+    "data_classification": "internal"
+  }
+}

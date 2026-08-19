@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/ai-lifecycle/result-envelope.schema.json",
+  "title": "Lifecycle Result Envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "spec_version",
+    "task_id",
+    "revision",
+    "correlation_id",
+    "run_id",
+    "provider",
+    "adapter_version",
+    "status",
+    "started_at",
+    "finished_at",
+    "summary",
+    "artifacts",
+    "changed_paths",
+    "external_changes",
+    "checks",
+    "findings",
+    "assumptions",
+    "residual_risks",
+    "handoffs",
+    "invalidations"
+  ],
+  "properties": {
+    "spec_version": { "type": "string", "pattern": "^1\\.[0-9]+\\.[0-9]+$" },
+    "task_id": { "$ref": "#/$defs/identifier" },
+    "revision": { "type": "integer", "minimum": 1 },
+    "correlation_id": { "$ref": "#/$defs/identifier" },
+    "run_id": { "$ref": "#/$defs/identifier" },
+    "provider": { "$ref": "#/$defs/shortIdentifier" },
+    "adapter_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.+_-]{0,127}$"
+    },
+    "status": { "enum": ["succeeded", "failed", "partial", "blocked", "cancelled"] },
+    "started_at": { "type": "string", "format": "date-time" },
+    "finished_at": { "type": "string", "format": "date-time" },
+    "summary": { "type": "string", "minLength": 1, "maxLength": 20000 },
+    "artifacts": {
+      "type": "array",
+      "maxItems": 512,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["artifact_id", "artifact_type", "uri", "digest", "source"],
+        "properties": {
+          "artifact_id": { "$ref": "#/$defs/shortIdentifier" },
+          "artifact_type": { "$ref": "#/$defs/shortIdentifier" },
+          "uri": { "type": "string", "minLength": 1, "maxLength": 4096 },
+          "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+          "source": { "$ref": "#/$defs/shortIdentifier" }
+        }
+      }
+    },
+    "changed_paths": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": { "$ref": "#/$defs/relativePath" },
+      "uniqueItems": true
+    },
+    "external_changes": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "required": ["provider", "resource_id", "operation", "rollback"],
+        "properties": {
+          "provider": { "$ref": "#/$defs/shortIdentifier" },
+          "resource_id": { "type": "string", "minLength": 1, "maxLength": 1024 },
+          "operation": { "$ref": "#/$defs/shortIdentifier" },
+          "rollback": { "type": ["string", "null"], "maxLength": 4000 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "checks": {
+      "type": "array",
+      "maxItems": 1024,
+      "items": {
+        "type": "object",
+        "required": ["id", "status", "evidence"],
+        "properties": {
+          "id": { "$ref": "#/$defs/shortIdentifier" },
+          "status": { "enum": ["passed", "failed", "blocked", "not_run"] },
+          "evidence": { "type": ["string", "null"], "maxLength": 4096 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "findings": {
+      "type": "array",
+      "maxItems": 1024,
+      "items": {
+        "type": "object",
+        "required": ["finding_id", "severity", "summary", "artifact"],
+        "properties": {
+          "finding_id": { "$ref": "#/$defs/shortIdentifier" },
+          "severity": { "enum": ["critical", "high", "medium", "low", "info"] },
+          "summary": { "type": "string", "minLength": 1, "maxLength": 4000 },
+          "artifact": { "type": "string", "minLength": 1, "maxLength": 4096 },
+          "location": { "type": ["string", "null"], "maxLength": 4096 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "assumptions": { "$ref": "#/$defs/textArray" },
+    "residual_risks": { "$ref": "#/$defs/textArray" },
+    "handoffs": { "$ref": "#/$defs/textArray" },
+    "invalidations": { "$ref": "#/$defs/textArray" },
+    "usage": { "type": ["object", "null"], "additionalProperties": true },
+    "error": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "code": { "$ref": "#/$defs/shortIdentifier" },
+        "message": { "type": "string", "minLength": 1, "maxLength": 20000 },
+        "retryable": { "type": "boolean" }
+      }
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$"
+    },
+    "shortIdentifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^(?![A-Za-z]:)(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"
+    },
+    "textArray": {
+      "type": "array",
+      "maxItems": 256,
+      "items": { "type": "string", "minLength": 1, "maxLength": 4000 },
+      "uniqueItems": true
+    }
+  }
+}

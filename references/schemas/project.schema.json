@@ -1,0 +1,201 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/ai-lifecycle/project.schema.json",
+  "title": "Lifecycle Project Configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "project",
+    "stack",
+    "lifecycle",
+    "agents",
+    "quality_gates",
+    "integration",
+    "policy"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "project": {
+      "type": "object",
+      "required": ["id", "name", "type", "repository_root", "risk_level", "description"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "type": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "repository_root": { "const": "." },
+        "risk_level": { "enum": ["low", "standard", "high"] },
+        "description": { "type": "string", "maxLength": 20000 }
+      },
+      "additionalProperties": false
+    },
+    "stack": {
+      "type": "object",
+      "required": ["languages", "frameworks", "package_managers", "build_systems", "databases", "deployment_targets"],
+      "properties": {
+        "languages": { "$ref": "#/$defs/stackArray" },
+        "frameworks": { "$ref": "#/$defs/stackArray" },
+        "package_managers": { "$ref": "#/$defs/stackArray" },
+        "build_systems": { "$ref": "#/$defs/stackArray" },
+        "databases": { "$ref": "#/$defs/stackArray" },
+        "deployment_targets": { "$ref": "#/$defs/stackArray" }
+      },
+      "additionalProperties": false
+    },
+    "lifecycle": {
+      "type": "object",
+      "required": ["phases", "disabled", "human_approvals"],
+      "properties": {
+        "phases": { "type": "array", "items": { "$ref": "#/$defs/phase" }, "minItems": 1, "maxItems": 10, "uniqueItems": true },
+        "disabled": { "type": "object", "maxProperties": 10, "propertyNames": { "$ref": "#/$defs/phase" }, "additionalProperties": { "type": "string", "minLength": 1, "maxLength": 4000 } },
+        "human_approvals": { "type": "array", "maxItems": 10, "items": { "$ref": "#/$defs/phase" }, "uniqueItems": true },
+        "promotion_matrix": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema_version",
+            "artifact_layout",
+            "enforce_immutable_digest",
+            "environments"
+          ],
+          "properties": {
+            "schema_version": { "const": 1 },
+            "artifact_layout": { "const": "environment-subdirectories" },
+            "enforce_immutable_digest": { "const": true },
+            "environments": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 32,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "approval_policy", "final"],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+                  },
+                  "approval_policy": {
+                    "enum": ["human-required", "automatic-after-gates"]
+                  },
+                  "final": { "type": "boolean" },
+                  "pre_check_ids": {
+                    "type": "array",
+                    "items": { "type": "string", "minLength": 1 },
+                    "uniqueItems": true
+                  },
+                  "post_check_ids": {
+                    "type": "array",
+                    "items": { "type": "string", "minLength": 1 },
+                    "uniqueItems": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "agents": {
+      "type": "object",
+      "required": ["enabled", "max_parallel", "ownership_strategy", "roles"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "max_parallel": { "type": "integer", "minimum": 1, "maximum": 16 },
+        "ownership_strategy": { "enum": ["exclusive-path", "worktree"] },
+        "roles": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/identifier" }, "uniqueItems": true }
+      },
+      "additionalProperties": false
+    },
+    "quality_gates": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 10,
+      "propertyNames": { "$ref": "#/$defs/phase" },
+      "additionalProperties": { "$ref": "#/$defs/gate" }
+    },
+    "integration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tool_registry", "default_timeout_seconds", "retry", "evidence_retention_days"],
+      "properties": {
+        "tool_registry": { "const": ".ai-lifecycle/tool-registry.json" },
+        "default_timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 7200 },
+        "retry": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["max_attempts", "base_delay_seconds", "max_delay_seconds"],
+          "properties": {
+            "max_attempts": { "type": "integer", "minimum": 1, "maximum": 10 },
+            "base_delay_seconds": { "type": "number", "minimum": 0, "maximum": 300 },
+            "max_delay_seconds": { "type": "number", "minimum": 0, "maximum": 300 }
+          }
+        },
+        "evidence_retention_days": { "type": "integer", "minimum": 1, "maximum": 3650 }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["external_mutations", "production_approval", "secrets", "network", "data_classification"],
+      "properties": {
+        "external_mutations": { "const": "require-explicit-authority" },
+        "production_approval": { "const": "human-required" },
+        "secrets": { "const": "environment-or-secret-manager" },
+        "network": { "const": "least-required" },
+        "data_classification": { "const": "internal" }
+      }
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "phase": {
+      "enum": ["discovery", "requirements", "architecture", "prototype", "implementation", "review", "verification", "integration", "deployment", "operations"]
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^(?![A-Za-z]:)(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"
+    },
+    "stackArray": {
+      "type": "array",
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 256 }
+    },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "description", "required", "command", "cwd", "timeout_seconds"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "description": { "type": "string", "minLength": 1, "maxLength": 4000 },
+        "required": { "type": "boolean" },
+        "command": { "type": "array", "minItems": 1, "maxItems": 128, "items": { "type": "string", "minLength": 1, "maxLength": 4096 } },
+        "cwd": { "$ref": "#/$defs/relativePath" },
+        "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 7200 },
+        "forward_env": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$" } },
+        "evidence_type": { "$ref": "#/$defs/identifier" },
+        "operating_systems": { "type": "array", "minItems": 1, "maxItems": 3, "uniqueItems": true, "items": { "enum": ["windows", "linux", "macos"] } }
+      }
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required_artifacts", "checks"],
+      "properties": {
+        "required_artifacts": { "type": "array", "maxItems": 256, "uniqueItems": true, "items": { "$ref": "#/$defs/relativePath" } },
+        "checks": { "type": "array", "maxItems": 128, "items": { "$ref": "#/$defs/check" } },
+        "post_required_artifacts": { "type": "array", "maxItems": 256, "uniqueItems": true, "items": { "$ref": "#/$defs/relativePath" } },
+        "post_checks": { "type": "array", "maxItems": 128, "items": { "$ref": "#/$defs/check" } }
+      }
+    }
+  }
+}

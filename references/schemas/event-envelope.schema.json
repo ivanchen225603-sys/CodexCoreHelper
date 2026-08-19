@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/ai-lifecycle/event-envelope.schema.json",
+  "title": "Lifecycle Event Envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "spec_version",
+    "event_id",
+    "event_type",
+    "occurred_at",
+    "source",
+    "subject",
+    "data",
+    "artifacts",
+    "trace",
+    "delivery",
+    "security"
+  ],
+  "properties": {
+    "spec_version": { "type": "string", "pattern": "^1\\.[0-9]+\\.[0-9]+$" },
+    "event_id": { "$ref": "#/$defs/identifier" },
+    "event_type": {
+      "enum": [
+        "task.accepted",
+        "task.started",
+        "task.progress",
+        "task.blocked",
+        "task.completed",
+        "task.failed",
+        "task.cancelled",
+        "artifact.created",
+        "artifact.superseded",
+        "gate.passed",
+        "gate.failed",
+        "approval.requested",
+        "approval.recorded",
+        "deployment.started",
+        "deployment.completed",
+        "deployment.failed",
+        "rollback.started",
+        "rollback.completed",
+        "incident.detected"
+      ]
+    },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["adapter_id", "run_id"],
+      "properties": {
+        "adapter_id": { "$ref": "#/$defs/shortIdentifier" },
+        "run_id": { "$ref": "#/$defs/shortIdentifier" }
+      }
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id", "lifecycle_run_id", "phase", "task_id"],
+      "properties": {
+        "project_id": { "$ref": "#/$defs/shortIdentifier" },
+        "lifecycle_run_id": { "$ref": "#/$defs/identifier" },
+        "phase": {
+          "enum": [
+            "discovery",
+            "requirements",
+            "architecture",
+            "prototype",
+            "implementation",
+            "review",
+            "verification",
+            "integration",
+            "deployment",
+            "operations"
+          ]
+        },
+        "task_id": {
+          "type": ["string", "null"],
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$"
+        }
+      }
+    },
+    "data": { "type": "object", "additionalProperties": true },
+    "artifacts": {
+      "type": "array",
+      "maxItems": 512,
+      "items": { "$ref": "#/$defs/artifact" }
+    },
+    "trace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["correlation_id", "causation_id"],
+      "properties": {
+        "correlation_id": { "$ref": "#/$defs/identifier" },
+        "causation_id": {
+          "type": ["string", "null"],
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+        }
+      }
+    },
+    "delivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attempt", "idempotency_key"],
+      "properties": {
+        "attempt": { "type": "integer", "minimum": 1 },
+        "idempotency_key": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key_id", "algorithm"],
+      "properties": {
+        "key_id": { "$ref": "#/$defs/shortIdentifier" },
+        "algorithm": { "const": "hmac-sha256" }
+      }
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$"
+    },
+    "shortIdentifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_id", "artifact_type", "uri", "digest", "source"],
+      "properties": {
+        "artifact_id": { "$ref": "#/$defs/shortIdentifier" },
+        "artifact_type": { "$ref": "#/$defs/shortIdentifier" },
+        "uri": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "source": { "$ref": "#/$defs/shortIdentifier" }
+      }
+    }
+  }
+}
