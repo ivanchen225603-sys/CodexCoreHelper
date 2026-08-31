@@ -137,6 +137,41 @@ Official reference:
 
 Do not ask two coding agents to edit the same ownership scope concurrently. Coding-agent output must return through the common result envelope, pass scope validation, receive independent review, and satisfy project gates. The coordinator chooses a provider based on verified capability, user preference, policy, cost, and availability; it does not silently switch providers when the user specified one.
 
+For a set of canonical tasks in the current phase, inspect the execution waves before starting providers:
+
+    python scripts/orchestrate_agents.py status \
+      --project-root <root> \
+      --phase <phase>
+
+After the user has authorized the provider execution and the host has set
+`AI_LIFECYCLE_TRUSTED_PROJECT_ROOT`, run the ready task graph through one registered coding-agent
+adapter:
+
+    python scripts/orchestrate_agents.py run-phase \
+      --project-root <root> \
+      --phase <phase> \
+      --task-id <task-a> \
+      --task-id <task-b> \
+      --adapter codex \
+      --execute \
+      --authorization-actor <actor> \
+      --authorization-reason <reason>
+
+The phase orchestrator validates `agents.enabled`, allowed roles, the current lifecycle run,
+the dependency graph, accepted completion receipts, and `agents.max_parallel`. It resumes by
+skipping tasks that already have exactly one historically valid completion receipt; each pending
+task still revalidates its direct dependencies and effective current outputs immediately before
+execution. `run-phase` requires an
+explicit `--task-id` for every active task; directory scanning is discovery-only. The bundled
+MVP uses `exclusive-path` ownership, runs each writer in its own wave, and parallelizes only
+independent read-only tasks. It stops after a failed wave and leaves phase gates
+to the coordinator. Do not describe `ownership_strategy: worktree`, task cancellation, task
+revision, or automatic provider retry as implemented by this script.
+
+Every bundled CLI invocation also acquires a process-safe worker slot, so direct adapter calls
+and orchestrated calls share the same configured `agents.max_parallel` ceiling. Expired slots are
+pruned, and a live full registry fails closed rather than oversubscribing providers.
+
 ## Source control and code review
 
 Capabilities:

@@ -1,4 +1,4 @@
 interface:
   display_name: "CodexCoreHelper"
-  short_description: "Coordinate software delivery across the full lifecycle"
-  default_prompt: "Use $codex-core-helper to coordinate this project from requirements through verified deployment."
+  short_description: "Coordinate gated multi-agent software delivery"
+  default_prompt: "Use $codex-core-helper to coordinate this requirement with risk-proportionate gates and multiple specialist agents while preserving the requested scope boundary."

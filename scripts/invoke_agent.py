@@ -37,6 +37,7 @@ from _lifecycle import (
     utc_now,
     validate_all,
     validate_identifier,
+    worker_slot,
     write_scopes_overlap,
     write_scope_lease,
     write_scope_lease_guard,
@@ -45,6 +46,7 @@ from adapter_bridge import (
     persist_completion_receipt,
     validate_adapter_for_task,
     validate_envelope,
+    validate_result_acceptance,
     validate_task_dependencies,
 )
 
@@ -637,10 +639,11 @@ def merge_isolated_changes(
     isolated_after: dict[str, str],
     finalize: Callable[[], None],
 ) -> None:
-    """Merge validated files with per-file atomic replacement and full rollback."""
-    if repository_snapshot(root) != original_before:
+    """Merge validated files only when the complete read baseline is unchanged."""
+    current_before_merge = repository_snapshot(root)
+    if current_before_merge != original_before:
         raise LifecycleError(
-            "Original repository changed during agent execution; refusing to merge"
+            "Original repository changed during agent execution; refusing a stale merge"
         )
 
     transaction = Path(tempfile.mkdtemp(prefix="ai-lifecycle-merge-"))
@@ -652,6 +655,7 @@ def merge_isolated_changes(
     staged_files: dict[str, Path | None] = {}
     created_directories: set[Path] = set()
     applied: list[str] = []
+    preserve_transaction = False
 
     try:
         for index, relative in enumerate(changes):
@@ -689,6 +693,11 @@ def merge_isolated_changes(
         for relative in changes:
             source = staged_files[relative]
             target = safe_merge_target(root, relative)
+            current_digest = sha256_file(target) if target.exists() else None
+            if current_digest != original_before.get(relative):
+                raise LifecycleError(
+                    f"Merge target changed while staging the agent result: {relative}"
+                )
             missing: list[Path] = []
             parent = target.parent
             while parent != root and not parent.exists():
@@ -724,6 +733,14 @@ def merge_isolated_changes(
             try:
                 target = safe_merge_target(root, relative)
                 backup = original_files[relative]
+                applied_digest = isolated_after.get(relative)
+                current_digest = sha256_file(target) if target.exists() else None
+                if current_digest != applied_digest:
+                    rollback_errors.append(
+                        f"{relative}: target diverged after agent application; "
+                        f"backup retained at {backups}"
+                    )
+                    continue
                 if backup is None:
                     if target.exists():
                         target.unlink()
@@ -737,6 +754,7 @@ def merge_isolated_changes(
             except OSError:
                 pass
         if rollback_errors:
+            preserve_transaction = True
             raise LifecycleError(
                 f"Agent merge failed ({exc}); rollback also failed: "
                 + "; ".join(rollback_errors)
@@ -745,7 +763,8 @@ def merge_isolated_changes(
             raise
         raise LifecycleError(f"Agent merge failed and was rolled back: {exc}") from exc
     finally:
-        shutil.rmtree(transaction, ignore_errors=True)
+        if not preserve_transaction:
+            shutil.rmtree(transaction, ignore_errors=True)
 
 
 def write_failure_evidence(
@@ -829,6 +848,14 @@ def main() -> int:
         require_trusted_project(root, "Coding-agent execution")
         trusted = True
         config, registry, state = validate_all(root)
+        agent_config = config.get("agents", {})
+        if agent_config.get("enabled") is not True:
+            raise LifecycleError("Coding-agent execution is disabled by project configuration")
+        if agent_config.get("ownership_strategy") != "exclusive-path":
+            raise LifecycleError(
+                "The bundled coding-agent adapter currently supports only the "
+                "exclusive-path ownership strategy"
+            )
         task_argument = args.task_file.expanduser()
         task_path = (
             task_argument.resolve()
@@ -846,6 +873,10 @@ def main() -> int:
         task = validate_envelope(
             "task", json.loads(task_path.read_text(encoding="utf-8"))
         )
+        if task.get("role") not in agent_config.get("roles", []):
+            raise LifecycleError(
+                f"Task role is not enabled by project configuration: {task.get('role')}"
+            )
         bind_task_context(task, config, state)
         validate_task_dependencies(root, task)
         if redact_json_value(task) != task:
@@ -941,14 +972,25 @@ def main() -> int:
             f"{task['task_id']}:{task['revision']}:{args.adapter}".encode("utf-8")
         ).hexdigest()[:24]
         lease_ttl = min(24 * 60 * 60, args.timeout_seconds + 15 * 60)
-        with lifecycle_lock(root, f"agent-{lock_digest}"), write_scope_lease(
-            root,
-            task_id=task["task_id"],
-            run_id=task["lifecycle_run_id"],
-            owner=f"{args.adapter}-{os.getpid()}",
-            write_scope=allowed_scopes,
-            ttl_seconds=lease_ttl,
-        ) as lease:
+        with (
+            lifecycle_lock(root, f"agent-{lock_digest}"),
+            worker_slot(
+                root,
+                task_id=task["task_id"],
+                run_id=task["lifecycle_run_id"],
+                owner=f"{args.adapter}-{os.getpid()}",
+                max_workers=agent_config["max_parallel"],
+                ttl_seconds=lease_ttl,
+            ) as active_worker,
+            write_scope_lease(
+                root,
+                task_id=task["task_id"],
+                run_id=task["lifecycle_run_id"],
+                owner=f"{args.adapter}-{os.getpid()}",
+                write_scope=allowed_scopes,
+                ttl_seconds=lease_ttl,
+            ) as lease,
+        ):
             if result_path.exists() or completion_path.exists() or evidence_path.exists():
                 raise LifecycleError(
                     "An invocation result already exists for this task and adapter; create a new task revision"
@@ -1046,6 +1088,10 @@ def main() -> int:
                     rejection_reasons.append(
                         f"result status is {result.get('status')!r}, not 'succeeded'"
                     )
+                try:
+                    validate_result_acceptance(task, result)
+                except LifecycleError as exc:
+                    rejection_reasons.append(str(exc))
                 if scope_violations:
                     rejection_reasons.append("changes escaped the allowed write scope")
                 if mismatch:
@@ -1086,6 +1132,7 @@ def main() -> int:
                         completion_path.relative_to(root)
                     ).replace("\\", "/"),
                     "write_scope_lease_id": lease.get("lease_id") if lease else None,
+                    "worker_slot_id": active_worker["slot_id"],
                     "output_limits": {
                         "stdout_bytes": MAX_AGENT_STDOUT_BYTES,
                         "stderr_bytes": MAX_AGENT_STDERR_BYTES,
@@ -1093,6 +1140,10 @@ def main() -> int:
                     "accepted": True,
                 }
                 created_metadata: list[Path] = []
+                expected_repository_outputs = [
+                    {"path": relative, "digest": isolated_after.get(relative)}
+                    for relative in sorted(changes)
+                ]
 
                 def finalize_metadata() -> None:
                     try:
@@ -1108,7 +1159,12 @@ def main() -> int:
                         atomic_create_json(result_path, result)
                         created_metadata.append(result_path)
                         persisted_completion = persist_completion_receipt(
-                            root, args.adapter, task, result, result_path
+                            root,
+                            args.adapter,
+                            task,
+                            result,
+                            result_path,
+                            expected_repository_outputs=expected_repository_outputs,
                         )
                         created_metadata.append(persisted_completion)
                         atomic_create_json(evidence_path, evidence)

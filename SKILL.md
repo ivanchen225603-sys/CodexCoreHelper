@@ -1,6 +1,6 @@
 ---
 name: codex-core-helper
-description: Coordinate new or existing software projects across requirements, architecture, prototyping, implementation, review, verification, CI/CD, deployment, and operations using configurable gates, specialized agents, and MCP, CLI, HTTP, or webhook adapters. Use for end-to-end delivery orchestration or reusable multi-tool software lifecycles; do not trigger for a narrow single-file edit or a standalone explanation.
+description: Coordinate new or existing software projects through risk-proportionate lifecycle gates and multi-agent delivery across requirements, architecture, implementation, review, verification, CI/CD, deployment, and operations. Use when the user requests multi-agent software delivery, end-to-end project orchestration, or a reusable multi-tool lifecycle; do not trigger for a narrow single-file edit or a standalone explanation.
 ---
 
 # CodexCoreHelper
@@ -16,6 +16,10 @@ Act as the control plane for a software delivery lifecycle. Preserve the user's 
 5. Discover available skills, MCP tools, CLIs, CI systems, test runners, design tools, credentials, and deployment providers using read-only checks.
 6. Update .ai-lifecycle/project.json and tool-registry.json only with verified capabilities. Mark unavailable integrations unavailable; never fabricate a connection.
 7. Resume from .ai-lifecycle/state.json. Do not redo approved phases unless a change invalidates their baselines.
+
+A newly initialized lifecycle begins with discovery so the repository baseline and user scope are
+captured. For an existing lifecycle, resume or reopen the first phase affected by the current
+change; do not restart from discovery without an invalidation reason.
 
 The deterministic scripts require `jsonschema>=4.18,<5` and `cryptography>=42,<50` as declared in
 scripts/requirements.txt. Missing validation dependencies are blocking; do not fall back to
@@ -42,6 +46,12 @@ Use this sequence for every enabled phase:
    at decision time; any intervening repository or gate-artifact change requires a new gate run.
 8. If approval is not required and every required check passes, the state machine may advance automatically.
 
+Treat explicit exclusions as run boundaries. For example, “do not deploy” means complete the
+authorized scope through verification, do not start deployment, and report scoped completion
+separately from end-to-end lifecycle completion. For a new initialization, disable deployment
+and operations with the user's rationale when they are out of scope. For an existing project,
+do not rewrite its historical phase configuration merely to express the current run boundary.
+
 Never manually edit state.json to bypass the state machine. A downstream phase stays locked until every required predecessor is approved.
 
 Before executing repository-configured commands or adapters, the host must set
@@ -54,18 +64,21 @@ issuer, audience, and subject allowlists. Never store private signing keys in th
 
 ## Multi-agent coordination
 
-Use subagents when multi-agent execution is enabled, the runtime supports delegation, and at least two tasks are genuinely independent. Keep the coordinator responsible for requirements, decisions, the task graph, state, integration, and final reporting.
+When the user explicitly requests multi-agent execution, use multiple bounded specialist roles whenever the work is substantial enough to justify them and the runtime supports delegation. Parallelism is a separate decision: parallelize only independent tasks, and run dependent roles sequentially, especially implementer → reviewer → quality-engineer. Do not invent low-value tasks only to increase the agent count. Keep the coordinator responsible for requirements, decisions, the task graph, state, integration, gates, and final reporting.
 
 - Prefer parallel agents for research, repository exploration, test design, log analysis, and independent review lanes.
-- For write-heavy work, give each agent an exclusive path or worktree ownership lease. Never assign overlapping write scopes concurrently.
+- Build a feature matrix before delegation: feature or concern, dependencies, acceptance criteria, expected paths, risk, role, and handoff.
+- For runtime-native Codex subagents, prefer read-only analysis, review, and test-design tasks. The coordinator verifies and promotes useful findings into a digest-bound phase artifact; canonical downstream tasks consume that artifact as an input. Native task IDs do not appear in canonical dependencies unless the native task used an adapter that created a valid completion receipt.
+- Route writing agents through the canonical task envelope and `scripts/orchestrate_agents.py` with the bundled isolated CLI adapter. The current orchestrator runs writers alone and parallelizes only independent read-only workers.
+- Give every writing agent an exclusive path ownership lease. Never assign overlapping write scopes concurrently. Shared schemas, dependency locks, migrations, generated code, and global configuration have one owner.
 - Require every agent to return a structured result envelope with artifacts, evidence, findings, assumptions, and handoffs.
 - Acquire the task's cross-process write-scope lease before starting a writing agent. A task is
   complete only after its canonical succeeded result and unique completion receipt are accepted.
   Dependencies may consume only those receipts from the same lifecycle run.
 - Do not allow an implementing agent to approve its own change. Use an independent reviewer for risk-bearing changes.
-- If delegation is unavailable, execute the same roles sequentially and preserve the same message contracts.
+- If the project disables agents or delegation is unavailable, report the limitation instead of silently claiming multi-agent execution. With user agreement, execute the same roles sequentially and preserve the same message contracts.
 
-Read references/multi-agent-protocol.md before spawning or configuring agents.
+Read references/multi-agent-protocol.md before spawning or configuring agents. Read the coding-agent section of references/tool-integration.md before dispatching canonical CLI tasks.
 
 ## Tool routing
 

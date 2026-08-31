@@ -34,10 +34,14 @@ project.json contains:
 - project: id, name, type, repository_root, risk_level, and description;
 - stack: detected languages, frameworks, package managers, build systems, databases, and deployment targets;
 - lifecycle: ordered phases, disabled phase rationale, approvals, and invalidation rules;
-- agents: enabled, max_parallel, ownership strategy, default roles, and optional model preferences;
+- agents: enabled, maximum parallel workers, ownership strategy, and allowed roles;
 - quality_gates: per-phase checks;
 - integration: registry file, default timeout, retries, callback policy, and evidence retention;
 - policy: external mutations, production approval, secrets, network, and data classification.
+
+`agents.max_parallel` counts active external Agent workers, not the coordinator. Bundled CLI
+invocations enforce the ceiling through process-safe worker slots, including direct invocations
+outside the phase orchestrator.
 
 Risk levels:
 

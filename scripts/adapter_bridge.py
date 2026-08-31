@@ -349,8 +349,50 @@ def bind_result_to_task(result: dict[str, Any], task: dict[str, Any]) -> None:
         )
 
 
+def validate_result_acceptance(task: dict[str, Any], result: dict[str, Any]) -> None:
+    """Require explicit passing evidence for every task acceptance criterion."""
+    checks = result.get("checks", [])
+    check_ids = [check.get("id") for check in checks]
+    if len(check_ids) != len(set(check_ids)):
+        raise LifecycleError("Result checks must use unique ids")
+    nonpassing = [
+        check.get("id", "unknown")
+        for check in checks
+        if check.get("status") != "passed"
+    ]
+    if nonpassing:
+        raise LifecycleError(
+            "Succeeded result contains non-passing checks: " + ", ".join(nonpassing)
+        )
+    by_id = {check["id"]: check for check in checks}
+    missing: list[str] = []
+    missing_evidence: list[str] = []
+    for criterion in task.get("acceptance_criteria", []):
+        criterion_id = criterion["id"]
+        check = by_id.get(criterion_id)
+        if check is None:
+            missing.append(criterion_id)
+            continue
+        evidence = check.get("evidence")
+        if not isinstance(evidence, str) or not evidence.strip():
+            missing_evidence.append(criterion_id)
+    if missing:
+        raise LifecycleError(
+            "Succeeded result lacks passing checks for acceptance criteria: "
+            + ", ".join(missing)
+        )
+    if missing_evidence:
+        raise LifecycleError(
+            "Acceptance checks require evidence: " + ", ".join(missing_evidence)
+        )
+
+
 def validate_result_artifact_references(
-    root: Path, task: dict[str, Any], result: dict[str, Any]
+    root: Path,
+    task: dict[str, Any],
+    result: dict[str, Any],
+    *,
+    ignored_current_paths: set[str] | None = None,
 ) -> None:
     """Validate accepted artifact identity and local bytes before completion."""
     if result.get("changed_paths") and not task["permissions"].get("write"):
@@ -395,10 +437,15 @@ def validate_result_artifact_references(
                     "External result artifacts require task permissions.network=true"
                 )
             continue
-        normalized = uri.replace("\\", "/")
+        normalized = str(PurePosixPath(uri.replace("\\", "/")))
         if normalized.startswith(".ai-lifecycle/"):
             path = contained_control_path(root, normalized, must_exist=True)
         else:
+            if normalized in (ignored_current_paths or set()):
+                # A direct dependent writer may supersede this repository artifact.
+                # Its own trusted task-output manifest validates the replacement.
+                contained_path(root, normalized)
+                continue
             lexical = root
             for part in Path(normalized).parts:
                 lexical = lexical / part
@@ -420,17 +467,121 @@ def validate_result_artifact_references(
             raise LifecycleError(f"Result artifact digest does not match: {normalized}")
 
 
+def repository_output_bindings(
+    root: Path, result: dict[str, Any]
+) -> list[dict[str, str | None]]:
+    """Bind every changed repository path to its current digest or deletion tombstone."""
+    outputs: list[dict[str, str | None]] = []
+    for relative in sorted(result.get("changed_paths", [])):
+        normalized = relative.replace("\\", "/")
+        if normalized == ".ai-lifecycle" or normalized.startswith(".ai-lifecycle/"):
+            raise LifecycleError("Repository outputs cannot target lifecycle control data")
+        path = contained_path(root, normalized)
+        if path.exists():
+            metadata = path.lstat()
+            reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+            attributes = getattr(metadata, "st_file_attributes", 0)
+            if path.is_symlink() or bool(reparse_flag and attributes & reparse_flag):
+                raise LifecycleError(f"Repository output is a link: {normalized}")
+            if not path.is_file():
+                raise LifecycleError(f"Repository output is not a regular file: {normalized}")
+            digest: str | None = sha256_file(path)
+        else:
+            digest = None
+        outputs.append({"path": normalized, "digest": digest})
+    return outputs
+
+
+def _normalize_repository_outputs(
+    value: Any, label: str
+) -> list[dict[str, str | None]]:
+    if not isinstance(value, list):
+        raise LifecycleError(f"{label} must be an array")
+    normalized: list[dict[str, str | None]] = []
+    seen: set[str] = set()
+    for index, item in enumerate(value):
+        if not isinstance(item, dict) or set(item) != {"path", "digest"}:
+            raise LifecycleError(
+                f"{label}[{index}] must contain exactly path and digest"
+            )
+        raw_path = item.get("path")
+        if not isinstance(raw_path, str):
+            raise LifecycleError(f"{label}[{index}].path must be a string")
+        path = validate_scope(raw_path)
+        if path == ".ai-lifecycle" or path.startswith(".ai-lifecycle/"):
+            raise LifecycleError(f"{label} cannot bind lifecycle control data")
+        if path in seen:
+            raise LifecycleError(f"{label} contains a duplicate path: {path}")
+        seen.add(path)
+        digest = item.get("digest")
+        if digest is not None and not (
+            isinstance(digest, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", digest)
+        ):
+            raise LifecycleError(f"{label}[{index}].digest is not a SHA-256 digest")
+        normalized.append({"path": path, "digest": digest})
+    expected = sorted(normalized, key=lambda item: item["path"])
+    if normalized != expected:
+        raise LifecycleError(f"{label} must be sorted by path")
+    return normalized
+
+
+def _validate_repository_outputs_current(
+    root: Path,
+    outputs: list[dict[str, str | None]],
+    *,
+    ignored_paths: set[str] | None = None,
+) -> None:
+    ignored = ignored_paths or set()
+    for binding in outputs:
+        path = binding["path"]
+        if path in ignored:
+            continue
+        current = repository_output_bindings(
+            root, {"changed_paths": [path]}
+        )[0]["digest"]
+        if current != binding["digest"]:
+            raise LifecycleError(
+                f"Completion receipt repository output no longer matches: {path}"
+            )
+
+
+def _merged_repository_outputs(
+    dependency_receipts: list[dict[str, Any]],
+    task_outputs: list[dict[str, str | None]],
+) -> list[dict[str, str | None]]:
+    merged: dict[str, str | None] = {}
+    for receipt in dependency_receipts:
+        for binding in receipt.get("repository_outputs", []):
+            path = binding["path"]
+            digest = binding["digest"]
+            prior = merged.get(path, digest)
+            if path in merged and prior != digest:
+                raise LifecycleError(
+                    "Dependency receipts contain conflicting repository outputs: " + path
+                )
+            merged[path] = digest
+    for binding in task_outputs:
+        merged[binding["path"]] = binding["digest"]
+    return [
+        {"path": path, "digest": merged[path]}
+        for path in sorted(merged)
+    ]
+
+
 def completion_receipt_document(
     root: Path,
     adapter_id: str,
     task: dict[str, Any],
     result: dict[str, Any],
     result_path: Path,
+    *,
+    expected_repository_outputs: list[dict[str, str | None]] | None = None,
 ) -> dict[str, Any]:
     validate_identifier(adapter_id, "completion adapter_id")
     bind_result_to_task(result, task)
     if result.get("status") != "succeeded":
         raise LifecycleError("Only a succeeded result can create a completion receipt")
+    validate_result_acceptance(task, result)
     canonical_result = contained_control_path(
         root,
         f".ai-lifecycle/tasks/{task['task_id']}/result-{adapter_id}.json",
@@ -444,8 +595,28 @@ def completion_receipt_document(
     if stored_result != result:
         raise LifecycleError("Completion result changed before receipt creation")
     validate_result_artifact_references(root, task, stored_result)
+    current_task_outputs = repository_output_bindings(root, stored_result)
+    if expected_repository_outputs is None:
+        if current_task_outputs:
+            raise LifecycleError(
+                "A trusted expected repository-output manifest is required for a writing completion"
+            )
+        task_outputs: list[dict[str, str | None]] = []
+    else:
+        task_outputs = _normalize_repository_outputs(
+            expected_repository_outputs, "expected_repository_outputs"
+        )
+        if task_outputs != current_task_outputs:
+            raise LifecycleError(
+                "Current repository outputs do not match the trusted agent output manifest"
+            )
+    dependency_bindings, dependency_receipts = _completion_dependency_state(
+        root,
+        task,
+        superseded_paths={binding["path"] for binding in task_outputs},
+    )
     return {
-        "schema_version": 1,
+        "schema_version": 3,
         "accepted": True,
         "status": "succeeded",
         "adapter_id": adapter_id,
@@ -456,6 +627,11 @@ def completion_receipt_document(
         "provider_run_id": result["run_id"],
         "result_path": str(canonical_result.relative_to(root)).replace("\\", "/"),
         "result_digest": sha256_file(canonical_result),
+        "dependency_receipts": dependency_bindings,
+        "task_outputs": task_outputs,
+        "repository_outputs": _merged_repository_outputs(
+            dependency_receipts, task_outputs
+        ),
         "accepted_at": utc_now(),
     }
 
@@ -466,8 +642,17 @@ def persist_completion_receipt(
     task: dict[str, Any],
     result: dict[str, Any],
     result_path: Path,
+    *,
+    expected_repository_outputs: list[dict[str, str | None]] | None = None,
 ) -> Path:
-    receipt = completion_receipt_document(root, adapter_id, task, result, result_path)
+    receipt = completion_receipt_document(
+        root,
+        adapter_id,
+        task,
+        result,
+        result_path,
+        expected_repository_outputs=expected_repository_outputs,
+    )
     path = contained_control_path(
         root,
         f".ai-lifecycle/tasks/{task['task_id']}/completion-receipt-{adapter_id}.json",
@@ -480,11 +665,15 @@ def _validated_completion_receipt(
     root: Path,
     task: dict[str, Any],
     receipt_path: Path,
+    *,
+    require_current_outputs: bool = True,
+    ignored_current_paths: set[str] | None = None,
+    _receipt_stack: set[str] | None = None,
 ) -> dict[str, Any]:
     if receipt_path.is_symlink() or not receipt_path.is_file():
         raise LifecycleError(f"Completion receipt is not a regular file: {receipt_path}")
     receipt = require_object(load_json(receipt_path), "completion receipt")
-    required = {
+    common_required = {
         "schema_version",
         "accepted",
         "status",
@@ -498,11 +687,17 @@ def _validated_completion_receipt(
         "result_digest",
         "accepted_at",
     }
-    if set(receipt) != required:
-        raise LifecycleError("Completion receipt fields do not match version 1")
+    version = receipt.get("schema_version")
+    version_fields = {
+        1: set(),
+        2: {"repository_outputs"},
+        3: {"dependency_receipts", "task_outputs", "repository_outputs"},
+    }
+    if version not in version_fields or set(receipt) != common_required | version_fields[version]:
+        raise LifecycleError("Completion receipt fields do not match a supported version")
     adapter_id = validate_identifier(receipt.get("adapter_id"), "completion adapter_id")
     bindings = {
-        "schema_version": 1,
+        "schema_version": version,
         "accepted": True,
         "status": "succeeded",
         "task_id": task["task_id"],
@@ -540,12 +735,218 @@ def _validated_completion_receipt(
     bind_result_to_task(result, task)
     if result.get("status") != "succeeded":
         raise LifecycleError("Accepted dependency result is not succeeded")
-    validate_result_artifact_references(root, task, result)
+    validate_result_acceptance(task, result)
+    if require_current_outputs:
+        validate_result_artifact_references(
+            root,
+            task,
+            result,
+            ignored_current_paths=ignored_current_paths,
+        )
+
+    if version == 1:
+        if task.get("dependencies") or result.get("changed_paths") or task.get(
+            "ownership", {}
+        ).get("write_scope"):
+            raise LifecycleError(
+                "Legacy version 1 receipts are accepted only for dependency-free read-only tasks; "
+                "create a replacement task with a new task_id"
+            )
+        return receipt
+
+    if version == 2:
+        if (
+            task.get("dependencies")
+            or result.get("changed_paths")
+            or task.get("ownership", {}).get("write_scope")
+        ):
+            raise LifecycleError(
+                "Version 2 receipts are accepted only for dependency-free read-only tasks; "
+                "create a replacement task with a new task_id"
+            )
+        outputs = _normalize_repository_outputs(
+            receipt.get("repository_outputs"), "receipt.repository_outputs"
+        )
+        expected_paths = sorted(result.get("changed_paths", []))
+        if [binding["path"] for binding in outputs] != expected_paths:
+            raise LifecycleError("Version 2 receipt outputs do not match result.changed_paths")
+        if require_current_outputs:
+            _validate_repository_outputs_current(
+                root, outputs, ignored_paths=ignored_current_paths
+            )
+        return receipt
+
+    task_outputs = _normalize_repository_outputs(
+        receipt.get("task_outputs"), "receipt.task_outputs"
+    )
+    repository_outputs = _normalize_repository_outputs(
+        receipt.get("repository_outputs"), "receipt.repository_outputs"
+    )
+    if [binding["path"] for binding in task_outputs] != sorted(
+        result.get("changed_paths", [])
+    ):
+        raise LifecycleError("Completion receipt task_outputs do not match result.changed_paths")
+
+    dependency_entries = receipt.get("dependency_receipts")
+    if not isinstance(dependency_entries, list):
+        raise LifecycleError("receipt.dependency_receipts must be an array")
+    expected_dependency_ids = sorted(task.get("dependencies", []))
+    if len(dependency_entries) != len(expected_dependency_ids):
+        raise LifecycleError("Completion receipt dependency bindings do not match the task")
+    dependency_receipts: list[dict[str, Any]] = []
+    seen_dependencies: set[str] = set()
+    stack = set() if _receipt_stack is None else set(_receipt_stack)
+    receipt_key = str(receipt_path.resolve())
+    if receipt_key in stack:
+        raise LifecycleError("Completion receipt dependency chain contains a cycle")
+    stack.add(receipt_key)
+    for index, entry in enumerate(dependency_entries):
+        if not isinstance(entry, dict) or set(entry) != {
+            "task_id",
+            "receipt_path",
+            "receipt_digest",
+        }:
+            raise LifecycleError(
+                f"receipt.dependency_receipts[{index}] has invalid fields"
+            )
+        dependency_id = validate_identifier(
+            entry.get("task_id"),
+            f"receipt.dependency_receipts[{index}].task_id",
+            min_length=8,
+        )
+        if dependency_id in seen_dependencies:
+            raise LifecycleError("Completion receipt contains a duplicate dependency")
+        seen_dependencies.add(dependency_id)
+        dependency_task_path = contained_control_path(
+            root, f".ai-lifecycle/tasks/{dependency_id}/task.json", must_exist=True
+        )
+        dependency_task = validate_envelope("task", load_json(dependency_task_path))
+        for key in ("project_id", "lifecycle_run_id"):
+            if dependency_task.get(key) != task.get(key):
+                raise LifecycleError(
+                    f"Receipt dependency {dependency_id} belongs to a different {key}"
+                )
+        dependency_receipt_path = contained_control_path(
+            root, entry.get("receipt_path"), must_exist=True
+        )
+        expected_prefix = (
+            f".ai-lifecycle/tasks/{dependency_id}/completion-receipt-"
+        )
+        relative_receipt_path = str(dependency_receipt_path.relative_to(root)).replace(
+            "\\", "/"
+        )
+        if not relative_receipt_path.startswith(expected_prefix):
+            raise LifecycleError("Completion receipt dependency path is not canonical")
+        receipt_digest = entry.get("receipt_digest")
+        if not isinstance(receipt_digest, str) or not re.fullmatch(
+            r"sha256:[0-9a-f]{64}", receipt_digest
+        ):
+            raise LifecycleError("Completion receipt dependency digest is invalid")
+        if sha256_file(dependency_receipt_path) != receipt_digest:
+            raise LifecycleError("Completion receipt dependency digest does not match")
+        dependency_receipts.append(
+            _validated_completion_receipt(
+                root,
+                dependency_task,
+                dependency_receipt_path,
+                require_current_outputs=False,
+                _receipt_stack=stack,
+            )
+        )
+    if sorted(seen_dependencies) != expected_dependency_ids:
+        raise LifecycleError("Completion receipt dependency bindings do not match the task")
+    expected_outputs = _merged_repository_outputs(
+        dependency_receipts, task_outputs
+    )
+    if repository_outputs != expected_outputs:
+        raise LifecycleError("Completion receipt effective repository outputs are inconsistent")
+    if require_current_outputs:
+        _validate_repository_outputs_current(
+            root, repository_outputs, ignored_paths=ignored_current_paths
+        )
     return receipt
 
 
+def _single_valid_completion_receipt(
+    root: Path,
+    task: dict[str, Any],
+    *,
+    require_current_outputs: bool,
+    ignored_current_paths: set[str] | None = None,
+) -> tuple[Path, dict[str, Any]]:
+    task_directory = contained_control_path(
+        root, f".ai-lifecycle/tasks/{task['task_id']}", must_exist=True
+    )
+    receipt_paths = sorted(task_directory.glob("completion-receipt-*.json"))
+    if len(receipt_paths) > 32:
+        raise LifecycleError(f"Task {task['task_id']} has too many completion receipts")
+    if not receipt_paths:
+        raise LifecycleError(
+            f"Task {task['task_id']} has no accepted completion receipt"
+        )
+    valid: list[tuple[Path, dict[str, Any]]] = []
+    errors: list[str] = []
+    for receipt_path in receipt_paths:
+        try:
+            valid.append(
+                (
+                    receipt_path,
+                    _validated_completion_receipt(
+                        root,
+                        task,
+                        receipt_path,
+                        require_current_outputs=require_current_outputs,
+                        ignored_current_paths=ignored_current_paths,
+                    ),
+                )
+            )
+        except LifecycleError as exc:
+            errors.append(str(exc))
+    if errors or len(valid) != 1:
+        detail = "; ".join(errors) or "multiple accepted completions"
+        raise LifecycleError(
+            f"Task {task['task_id']} does not have exactly one valid completion: {detail}"
+        )
+    return valid[0]
+
+
+def _completion_dependency_state(
+    root: Path,
+    task: dict[str, Any],
+    *,
+    superseded_paths: set[str],
+) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
+    bindings: list[dict[str, str]] = []
+    receipts: list[dict[str, Any]] = []
+    for dependency_id in sorted(task.get("dependencies", [])):
+        dependency_path = contained_control_path(
+            root, f".ai-lifecycle/tasks/{dependency_id}/task.json", must_exist=True
+        )
+        dependency = validate_envelope("task", load_json(dependency_path))
+        for key in ("project_id", "lifecycle_run_id"):
+            if dependency.get(key) != task.get(key):
+                raise LifecycleError(
+                    f"Dependency {dependency_id} belongs to a different {key}"
+                )
+        receipt_path, receipt = _single_valid_completion_receipt(
+            root,
+            dependency,
+            require_current_outputs=True,
+            ignored_current_paths=superseded_paths,
+        )
+        bindings.append(
+            {
+                "task_id": dependency_id,
+                "receipt_path": str(receipt_path.relative_to(root)).replace("\\", "/"),
+                "receipt_digest": sha256_file(receipt_path),
+            }
+        )
+        receipts.append(receipt)
+    return bindings, receipts
+
+
 def validate_task_dependencies(root: Path, task: dict[str, Any]) -> None:
-    """Require an acyclic task graph whose dependencies have accepted results."""
+    """Require an acyclic graph whose direct dependencies have current accepted state."""
     root_task_id = task["task_id"]
     visiting: set[str] = set()
     verified: set[str] = set()
@@ -575,32 +976,18 @@ def validate_task_dependencies(root: Path, task: dict[str, Any]) -> None:
                         f"Dependency {dependency_id} belongs to a different {key}"
                     )
             visit(dependency)
-            receipt_paths = sorted(dependency_path.parent.glob("completion-receipt-*.json"))
-            if len(receipt_paths) > 32:
-                raise LifecycleError(
-                    f"Dependency {dependency_id} has too many completion receipts"
-                )
-            if not receipt_paths:
-                raise LifecycleError(
-                    f"Dependency {dependency_id} has no accepted completion receipt"
-                )
-            valid_receipts = 0
-            receipt_errors: list[str] = []
-            for receipt_path in receipt_paths:
-                try:
-                    _validated_completion_receipt(root, dependency, receipt_path)
-                    valid_receipts += 1
-                except LifecycleError as exc:
-                    receipt_errors.append(str(exc))
-            if receipt_errors or valid_receipts != 1:
-                detail = "; ".join(receipt_errors) or "multiple accepted completions"
-                raise LifecycleError(
-                    f"Dependency {dependency_id} does not have exactly one valid completion: {detail}"
-                )
         visiting.remove(current_id)
         verified.add(current_id)
 
     visit(task)
+    for dependency_id in task.get("dependencies", []):
+        dependency_path = contained_control_path(
+            root, f".ai-lifecycle/tasks/{dependency_id}/task.json", must_exist=True
+        )
+        dependency = validate_envelope("task", load_json(dependency_path))
+        _single_valid_completion_receipt(
+            root, dependency, require_current_outputs=True
+        )
 
 
 def parse_acceptance(values: list[str], file_path: Path | None) -> list[dict[str, str]]:
@@ -647,6 +1034,10 @@ def command_prepare_task(args: argparse.Namespace) -> int:
         raise LifecycleError(
             f"Tasks may be prepared only for an in-progress phase; {phase} is "
             f"{state['phases'][phase]['status']}"
+        )
+    if args.role not in config["agents"]["roles"]:
+        raise LifecycleError(
+            f"Task role is not enabled by project configuration: {args.role}"
         )
     if args.objective_file:
         objective = args.objective_file.expanduser().resolve().read_text(encoding="utf-8")

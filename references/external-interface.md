@@ -61,6 +61,20 @@ Required logical fields:
 - error object for non-success terminal states.
 
 A succeeded result is not gate approval. The coordinator still validates schema, artifacts, write scope, review, and deterministic checks.
+Every acceptance criterion in the task must have one result check with the same ID, `passed`
+status, and non-empty evidence. Check IDs are unique. A result that reports a non-passing check,
+omits an acceptance check, or omits its evidence cannot receive or satisfy a completion receipt.
+
+Completion receipts use the internal version 3 format. A writing receipt binds `task_outputs`
+to the trusted isolated-workspace manifest and compares that manifest with the working tree; it
+never treats a fresh sample of mutable working-tree bytes as the expected agent result. The
+receipt also binds the exact direct-dependency receipt digests and carries an effective
+`repository_outputs` closure. A downstream writer may intentionally supersede an ancestor path,
+while unsuperseded ancestor outputs remain current-state requirements for later consumers.
+Version 1 receipts remain readable only for dependency-free, read-only tasks. Legacy writing
+receipts, including all version 2 writing receipts, must be replaced by a new canonical task ID;
+version 2 remains readable only for dependency-free, read-only tasks. Do not edit or delete
+lifecycle control records by hand.
 
 ## Event envelope
 
@@ -127,9 +141,11 @@ assertion signature or private key. Every `jti` is single-use within lifecycle s
 
 A task dependency is satisfied only by exactly one canonical succeeded result plus
 `completion-receipt-<adapter>.json`. The receipt binds adapter, task ID, revision, correlation
-ID, lifecycle run, canonical result path, result digest, and acceptance time. Local result
+ID, lifecycle run, canonical result path, result digest, every changed repository path with its
+accepted SHA-256 digest or deletion tombstone, and acceptance time. Local result
 artifacts are re-hashed before acceptance; external artifacts must use credential-free HTTPS and
-a lowercase SHA-256 digest. A provider acknowledgement, 202 response, event file, or failed
+a lowercase SHA-256 digest. Repository output bindings are revalidated when a dependency is
+consumed; changed or missing output invalidates the receipt. A provider acknowledgement, 202 response, event file, or failed
 result is not a completion receipt.
 
 ## HTTP adapter API
@@ -357,6 +373,11 @@ successful result is atomically created as `result-<adapter>.json`, remains boun
 lifecycle run, and receives `completion-receipt-<adapter>.json`. Tool-level `isError` produces a
 uniquely named failed result with no completion receipt and a non-zero exit status, so a safe
 retry is not blocked; it is never reported as success.
+
+For a generic MCP result to satisfy task acceptance criteria, `structuredContent` must contain
+an `acceptance_checks` array of `{id,status}` claims using the task's criterion IDs. The bridge
+does not invent passing checks from tool-call success; it binds explicit claims to the persisted
+raw MCP evidence before normal completion validation.
 
 The process tree is stopped before a result or completion receipt is accepted. After shutdown,
 the bridge rechecks the task, phase state, registry policy, and arguments digest while holding

@@ -130,7 +130,7 @@ class ProjectFixture:
             "agents": {
                 "enabled": True,
                 "max_parallel": 3,
-                "ownership_strategy": "worktree",
+                "ownership_strategy": "exclusive-path",
                 "roles": ["implementer", "release-engineer"],
             },
             "quality_gates": {

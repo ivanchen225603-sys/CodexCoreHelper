@@ -80,6 +80,7 @@ MAX_OUTPUT_CHARS = 200_000
 MAX_JSON_BYTES = 16 * 1024 * 1024
 LEASE_SPEC_VERSION = 1
 MAX_ACTIVE_WRITE_LEASES = 10_000
+MAX_ACTIVE_WORKER_SLOTS = 1_024
 
 
 class LifecycleError(ValueError):
@@ -675,6 +676,140 @@ def write_scope_lease(
             release_write_scope_lease(root, lease)
         except LeaseExpiredOrMissingError:
             # An expired lease may already have been pruned by another process.
+            pass
+
+
+def _worker_slot_directory(root: Path) -> Path:
+    directory = contained_control_path(root, ".ai-lifecycle/worker-slots")
+    directory.mkdir(parents=True, exist_ok=True)
+    if directory.is_symlink() or not directory.is_dir():
+        raise LifecycleError("Lifecycle worker-slots path is not a regular directory")
+    return directory
+
+
+def _active_worker_slots(root: Path, now: float) -> list[tuple[Path, dict[str, Any]]]:
+    active: list[tuple[Path, dict[str, Any]]] = []
+    paths = sorted(_worker_slot_directory(root).glob("*.json"))
+    if len(paths) > MAX_ACTIVE_WORKER_SLOTS:
+        raise LifecycleError("Worker-slot registry exceeds its safety limit")
+    expected = {
+        "schema_version",
+        "slot_id",
+        "task_id",
+        "lifecycle_run_id",
+        "owner",
+        "owner_token",
+        "acquired_at",
+        "expires_at_epoch",
+    }
+    for path in paths:
+        if path.is_symlink() or not path.is_file():
+            raise LifecycleError(f"Worker slot is not a regular file: {path}")
+        slot = require_object_json(load_json(path), "worker slot")
+        if set(slot) != expected or slot.get("schema_version") != 1:
+            raise LifecycleError("Worker-slot fields are invalid")
+        validate_identifier(slot.get("slot_id"), "worker slot_id", min_length=8)
+        validate_identifier(slot.get("task_id"), "worker task_id", min_length=8)
+        validate_identifier(
+            slot.get("lifecycle_run_id"), "worker lifecycle_run_id", min_length=8
+        )
+        validate_identifier(slot.get("owner"), "worker owner")
+        if not isinstance(slot.get("owner_token"), str) or not re.fullmatch(
+            r"[0-9a-f]{32}", slot["owner_token"]
+        ):
+            raise LifecycleError("Worker-slot owner_token is invalid")
+        expiry = slot.get("expires_at_epoch")
+        if not isinstance(expiry, (int, float)):
+            raise LifecycleError("Worker-slot expiry is invalid")
+        if float(expiry) <= now:
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+            continue
+        active.append((path, slot))
+    return active
+
+
+def acquire_worker_slot(
+    root: Path,
+    *,
+    task_id: str,
+    run_id: str,
+    owner: str,
+    max_workers: int,
+    ttl_seconds: int,
+) -> dict[str, Any]:
+    """Acquire one process-safe worker slot from the configured global ceiling."""
+    validate_identifier(task_id, "worker task_id", min_length=8)
+    validate_identifier(run_id, "worker lifecycle_run_id", min_length=8)
+    validate_identifier(owner, "worker owner")
+    if not 1 <= max_workers <= 16:
+        raise LifecycleError("Worker limit must be between 1 and 16")
+    if not 1 <= ttl_seconds <= 24 * 60 * 60:
+        raise LifecycleError("Worker-slot ttl must be between 1 and 86400 seconds")
+    now = time.time()
+    slot = {
+        "schema_version": 1,
+        "slot_id": f"worker-{uuid.uuid4()}",
+        "task_id": task_id,
+        "lifecycle_run_id": run_id,
+        "owner": owner,
+        "owner_token": uuid.uuid4().hex,
+        "acquired_at": utc_now(),
+        "expires_at_epoch": now + ttl_seconds,
+    }
+    with lifecycle_lock(root, "worker-slot-registry"):
+        active = _active_worker_slots(root, now)
+        if len(active) >= max_workers:
+            raise LifecycleError(
+                f"Configured worker limit is already in use ({max_workers})"
+            )
+        path = contained_control_path(
+            root, f".ai-lifecycle/worker-slots/{slot['slot_id']}.json"
+        )
+        atomic_create_json(path, slot)
+    return slot
+
+
+def release_worker_slot(root: Path, slot: dict[str, Any]) -> None:
+    with lifecycle_lock(root, "worker-slot-registry"):
+        path = contained_control_path(
+            root,
+            f".ai-lifecycle/worker-slots/{slot['slot_id']}.json",
+        )
+        if not path.exists():
+            raise LeaseExpiredOrMissingError("Worker slot is missing or expired")
+        current = require_object_json(load_json(path), "worker slot")
+        if current != slot:
+            raise LifecycleError("Worker-slot binding changed before release")
+        path.unlink()
+
+
+@contextmanager
+def worker_slot(
+    root: Path,
+    *,
+    task_id: str,
+    run_id: str,
+    owner: str,
+    max_workers: int,
+    ttl_seconds: int,
+) -> Iterator[dict[str, Any]]:
+    slot = acquire_worker_slot(
+        root,
+        task_id=task_id,
+        run_id=run_id,
+        owner=owner,
+        max_workers=max_workers,
+        ttl_seconds=ttl_seconds,
+    )
+    try:
+        yield slot
+    finally:
+        try:
+            release_worker_slot(root, slot)
+        except (FileNotFoundError, LeaseExpiredOrMissingError):
             pass
 
 

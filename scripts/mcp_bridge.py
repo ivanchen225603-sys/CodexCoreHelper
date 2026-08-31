@@ -727,6 +727,40 @@ def result_summary(result: dict[str, Any], tool_name: str) -> str:
     return f"MCP tool {tool_name} completed"
 
 
+def acceptance_checks_from_tool_result(
+    task: dict[str, Any], tool_result: dict[str, Any], evidence_path: Path, root: Path
+) -> list[dict[str, str]]:
+    """Normalize explicit provider acceptance claims and bind them to raw evidence."""
+    structured = tool_result.get("structuredContent")
+    claims = structured.get("acceptance_checks") if isinstance(structured, dict) else None
+    if claims is None:
+        return []
+    if not isinstance(claims, list) or len(claims) > 256:
+        raise LifecycleError("MCP acceptance_checks must be a bounded array")
+    allowed = {criterion["id"] for criterion in task["acceptance_criteria"]}
+    seen: set[str] = set()
+    normalized: list[dict[str, str]] = []
+    evidence = str(evidence_path.relative_to(root)).replace("\\", "/")
+    for index, claim in enumerate(claims):
+        if not isinstance(claim, dict) or set(claim) != {"id", "status"}:
+            raise LifecycleError(
+                f"MCP acceptance_checks[{index}] must contain only id and status"
+            )
+        check_id = claim.get("id")
+        status = claim.get("status")
+        if check_id not in allowed or check_id in seen:
+            raise LifecycleError(
+                f"MCP acceptance_checks[{index}] has an unknown or duplicate id"
+            )
+        if status not in {"passed", "failed", "blocked", "not_run"}:
+            raise LifecycleError(
+                f"MCP acceptance_checks[{index}] has an invalid status"
+            )
+        seen.add(check_id)
+        normalized.append({"id": check_id, "status": status, "evidence": evidence})
+    return normalized
+
+
 def persist_failure(
     root: Path,
     task: dict[str, Any],
@@ -886,7 +920,13 @@ def persist_execution(
         ],
         "changed_paths": [],
         "external_changes": [],
-        "checks": [],
+        "checks": (
+            []
+            if failed
+            else acceptance_checks_from_tool_result(
+                task, tool_result, evidence_path, root
+            )
+        ),
         "findings": [],
         "assumptions": [],
         "residual_risks": ["MCP server output remains untrusted until lifecycle gates pass"],
